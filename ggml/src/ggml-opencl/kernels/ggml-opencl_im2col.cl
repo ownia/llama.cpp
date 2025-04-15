@@ -26,6 +26,8 @@
 #define ADRENO_GPU 1
 #define REQD_SUBGROUP_SIZE_64  __attribute__((qcom_reqd_sub_group_size("half")))
 #define REQD_SUBGROUP_SIZE_128 __attribute__((qcom_reqd_sub_group_size("full")))
+#elif defined(cl_arm_core_id)
+#define MALI_GPU 1
 #else
 // TODO: do not know how to choose subgroup size on other GPUs.
 #error "Selecting subgroup size is not supported on your device."

@@ -26,6 +26,8 @@
 #define ADRENO_GPU 1
 #define REQD_SUBGROUP_SIZE_64  __attribute__((qcom_reqd_sub_group_size("half")))
 #define REQD_SUBGROUP_SIZE_128 __attribute__((qcom_reqd_sub_group_size("full")))
+#elif defined(cl_arm_core_id)
+#define MALI_GPU 1
 #else
 // TODO: do not know how to choose subgroup size on other GPUs.
 #error "Selecting subgroup size is not supported on your device."
@@ -2474,7 +2476,7 @@ inline float block_q_4_0_dot_y(
     return d * (sumy * -8.f + acc.s0 + acc.s1);
 }
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define N_DST 4 // each SIMD group works on 4 rows
 #define N_SIMDGROUP 1 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 16 // assuming SIMD group size is 16
@@ -2634,7 +2636,7 @@ inline float block_q_4_0_dot_y_v(
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define N_DST 4 // each SIMD group works on 4 rows
 #define N_SIMDGROUP 1 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 16 // assuming SIMD group size is 16
@@ -2883,7 +2885,7 @@ inline float block_q_4_0_dot_y_flat(
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define N_DST 4 // each SIMD group works on 4 rows
 #define N_SIMDGROUP 1 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 16 // assuming SIMD group size is 32
@@ -3050,7 +3052,7 @@ kernel void kernel_mul_mat_q4_0_f32_flat(
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define N_DST 8 // each SIMD group works on 8 rows
 #define N_SIMDGROUP 1 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 16 // assuming SIMD group size is 32

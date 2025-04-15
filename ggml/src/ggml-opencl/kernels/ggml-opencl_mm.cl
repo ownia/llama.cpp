@@ -30,6 +30,8 @@
 #define ADRENO_GPU 1
 #define REQD_SUBGROUP_SIZE_64  __attribute__((qcom_reqd_sub_group_size("half")))
 #define REQD_SUBGROUP_SIZE_128 __attribute__((qcom_reqd_sub_group_size("full")))
+#elif defined(cl_arm_core_id)
+#define MALI_GPU 1
 #else
 // TODO: do not know how to choose subgroup size on other GPUs.
 #error "Selecting subgroup size is not supported on your device."
@@ -122,7 +124,7 @@ inline float mm_block_q_4_0_dot_y_flat(
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define N_DST 8 // each SIMD group works on 8 rows (in weights matrix)
 #define N_SIMDGROUP 1 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 16 // assuming SIMD group size is 16
@@ -309,7 +311,7 @@ kernel void kernel_mul_mat_q4_0_f32_1d_8x_flat(
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define N_DST 16 // each SIMD group works on 8 rows (in weights matrix)
 #define N_SIMDGROUP 1 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 16 // assuming SIMD group size is 16
@@ -611,7 +613,7 @@ inline float block_q_4_0_dot_y_flat_v8(
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define THREADS_PER_BLK 4   // Number of threads per block, or each thread process 1/THREADS_PER_BLK of a block
 #define N_DST           4
 #define N_SIMDGROUP     1
@@ -856,7 +858,7 @@ float qcom_sub_group_reduce_add(float sum) {
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define THREADS_PER_BLK 4   // Number of threads per block, or each thread process 1/THREADS_PER_BLK of a block
 #define N_DST           4
 #define N_SIMDGROUP     1
@@ -1095,7 +1097,7 @@ kernel void kernel_mul_mat_q4_0_f32_flat_img_v0(
 #undef N_SIMDGROUP
 #undef N_SIMDWIDTH
 
-#ifdef INTEL_GPU
+#if defined(INTEL_GPU) || defined(MALI_GPU)
 #define N_DST 1 // number of rows each SIMD group works on
 #define N_SIMDGROUP 2 // number of SIMD groups in a thread group
 #define N_SIMDWIDTH 16 // SIMD group size
