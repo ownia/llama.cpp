@@ -42,9 +42,11 @@
 #include <omp.h>
 #endif
 
+/*
 #if defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_MATMUL_INT8)
 #undef GGML_USE_LLAMAFILE
 #endif
+*/
 
 #ifdef GGML_USE_LLAMAFILE
 #include "llamafile/sgemm.h"
