@@ -1939,9 +1939,15 @@ class vk_perf_logger {
                           << (double(total_op_flops) / (1000.0 * 1000.0 * 1000.0)) /
                                  (double(total_op_times) / (1000.0 * 1000.0 * 1000.0))
                           << " GFLOPS/s)";
+                cum_flops[t.first] += total_op_flops;
+                cum_flops_time[t.first] += total_op_times;
             }
 
             total_all_op_times += total_op_times;
+
+            cum_times[t.first] += total_op_times;
+            cum_count[t.first] += t.second.size();
+            cum_total_time += total_op_times;
 
             std::cerr << std::endl;
         }
@@ -1952,6 +1958,42 @@ class vk_perf_logger {
 
         timings.clear();
         flops.clear();
+    }
+
+    void print_summary(const std::string & label) {
+        if (cum_times.empty()) {
+            return;
+        }
+        std::vector<std::pair<std::string, uint64_t>> sorted(cum_times.begin(), cum_times.end());
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const auto & a, const auto & b) { return a.second > b.second; });
+        // Infer the stage from the ops seen: an image/audio encoder runs CONV_2D/IM2COL.
+        std::string stage = "llm";
+        for (const auto & t : cum_times) {
+            if (t.first.find("CONV_2D") != std::string::npos ||
+                t.first.find("IM2COL")  != std::string::npos) {
+                stage = "clip";
+                break;
+            }
+        }
+        std::cerr << "================\nVulkan Timings Summary [" << stage << "] [" << label << "] (all computes):" << std::endl;
+        for (const auto & t : sorted) {
+            const uint64_t total_op_times = t.second;
+            const uint64_t count = cum_count[t.first];
+            std::cerr << t.first << ": " << count << " x " << (total_op_times / count / 1000.0)
+                      << " us = " << (total_op_times / 1000.0) << " us"
+                      << " (" << (cum_total_time ? 100.0 * total_op_times / cum_total_time : 0.0) << "%)";
+            auto it = cum_flops.find(t.first);
+            if (it != cum_flops.end()) {
+                const uint64_t flops_time = cum_flops_time[t.first];
+                std::cerr << " ("
+                          << (double(it->second) / (1000.0 * 1000.0 * 1000.0)) /
+                                 (double(flops_time) / (1000.0 * 1000.0 * 1000.0))
+                          << " GFLOPS/s)";
+            }
+            std::cerr << std::endl;
+        }
+        std::cerr << "Total time: " << cum_total_time / 1000000.0 << " ms.\n================" << std::endl;
     }
 
     std::string get_node_fusion_name(const ggml_tensor * node, const char *fusion_name, uint64_t *n_flops) {
@@ -2070,6 +2112,11 @@ class vk_perf_logger {
   private:
     std::map<std::string, std::vector<uint64_t>> timings;
     std::map<std::string, std::vector<uint64_t>> flops;
+    std::map<std::string, uint64_t> cum_times;
+    std::map<std::string, uint64_t> cum_count;
+    std::map<std::string, uint64_t> cum_flops;
+    std::map<std::string, uint64_t> cum_flops_time;
+    uint64_t cum_total_time {};
     uint32_t print_count {};
 };
 
@@ -15025,6 +15072,7 @@ static void ggml_vk_cleanup(ggml_backend_vk_context * ctx) {
     }
     if (vk_perf_logger_enabled) {
         ctx->perf_logger->print_timings(true);
+        ctx->perf_logger->print_summary(ctx->name + " @ " + ctx->device->name);
     }
 }
 
