@@ -2082,16 +2082,19 @@ class vk_perf_logger {
         return fusion_str + ggml_op_name(node->op);
     }
 
-    void log_timing(const ggml_tensor * node, const char *fusion_name, uint64_t time) {
+    void log_timing(const ggml_tensor * node, const char *fusion_name, const std::string & pipeline_names, uint64_t time) {
         uint64_t n_flops;
         std::string name = get_node_fusion_name(node, fusion_name, &n_flops);
+        if (!pipeline_names.empty()) {
+            name += " [" + pipeline_names + "]";
+        }
         if (n_flops) {
             flops[name].push_back(n_flops);
         }
         timings[name].push_back(time);
     }
 
-    void log_timing(const std::vector<ggml_tensor *> &nodes, const std::vector<const char *> &names, uint64_t time) {
+    void log_timing(const std::vector<ggml_tensor *> &nodes, const std::vector<const char *> &names, const std::string & pipeline_names, uint64_t time) {
         uint64_t total_flops = 0;
         std::string name;
         for (size_t n = 0; n < nodes.size(); ++n) {
@@ -2102,6 +2105,9 @@ class vk_perf_logger {
             if (n != nodes.size() - 1) {
                 name += ", ";
             }
+        }
+        if (!pipeline_names.empty()) {
+            name += " [" + pipeline_names + "]";
         }
         if (total_flops) {
             flops[name].push_back(total_flops);
@@ -2187,9 +2193,25 @@ struct ggml_backend_vk_context {
     std::vector<int> query_fusion_node_count;
     std::vector<ggml_tensor *> query_nodes;
     std::vector<int> query_node_idx;
+    // pipeline (SPIR-V shader) names dispatched for each timed query slot
+    std::vector<std::string> query_pipeline_names;
+    // pipeline names dispatched since the last timestamp, moved into query_pipeline_names
+    std::vector<const char *> current_pipeline_names;
     int32_t num_queries {};
     int32_t query_idx {};
 };
+
+static void ggml_vk_perf_logger_store_pipeline_names(ggml_backend_vk_context * ctx, int slot) {
+    std::string joined;
+    for (const char * n : ctx->current_pipeline_names) {
+        if (!joined.empty()) {
+            joined += "+";
+        }
+        joined += n;
+    }
+    ctx->query_pipeline_names[slot] = joined;
+    ctx->current_pipeline_names.clear();
+}
 
 static void * const vk_ptr_base = (void *)(uintptr_t) 0x1000;  // NOLINT
 
@@ -7552,6 +7574,11 @@ template <typename T, uint32_t N> const T *push_constant_data(const std::array<T
 
 template <typename T>
 static void ggml_vk_dispatch_pipeline(ggml_backend_vk_context* ctx, vk_context& subctx, vk_pipeline& pipeline, std::initializer_list<vk::DescriptorBufferInfo> const& descriptor_buffer_infos, const T &push_constants, std::array<uint32_t, 3> elements) {
+    if (vk_perf_logger_enabled) {
+        if (ctx->current_pipeline_names.empty() || pipeline->name != ctx->current_pipeline_names.back()) {
+            ctx->current_pipeline_names.push_back(pipeline->name.c_str());
+        }
+    }
     const uint32_t wg0 = CEIL_DIV(elements[0], pipeline->wg_denoms[0]);
     const uint32_t wg1 = CEIL_DIV(elements[1], pipeline->wg_denoms[1]);
     const uint32_t wg2 = CEIL_DIV(elements[2], pipeline->wg_denoms[2]);
@@ -14525,6 +14552,7 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
             if (vk_perf_logger_enabled && vk_perf_logger_concurrent) {
                 ctx->query_node_idx[ctx->query_idx] = node_idx;
+                ggml_vk_perf_logger_store_pipeline_names(ctx, ctx->query_idx);
                 compute_ctx->s->buffer->buf.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands, ctx->query_pool, ctx->query_idx++);
                 ggml_vk_sync_buffers(ctx, compute_ctx);
             }
@@ -16208,6 +16236,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
             ctx->query_fusion_node_count.resize(ctx->num_queries);
             ctx->query_nodes.resize(ctx->num_queries);
             ctx->query_node_idx.resize(ctx->num_queries);
+            ctx->query_pipeline_names.resize(ctx->num_queries);
         }
 
         ctx->device->device.resetQueryPool(ctx->query_pool, 0, cgraph->n_nodes+1);
@@ -16215,6 +16244,8 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
         std::fill(ctx->query_fusion_node_count.begin(), ctx->query_fusion_node_count.end(), 0);
         std::fill(ctx->query_nodes.begin(), ctx->query_nodes.end(), nullptr);
         std::fill(ctx->query_node_idx.begin(), ctx->query_node_idx.end(), 0);
+        std::fill(ctx->query_pipeline_names.begin(), ctx->query_pipeline_names.end(), std::string());
+        ctx->current_pipeline_names.clear();
 
         GGML_ASSERT(ctx->compute_ctx.expired());
         compute_ctx = ggml_vk_get_compute_ctx(ctx);
@@ -16476,6 +16507,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 // track a single node/fusion for the current query
                 ctx->query_nodes[ctx->query_idx] = cgraph->nodes[i];
                 ctx->query_fusion_names[ctx->query_idx] = fusion_string;
+                ggml_vk_perf_logger_store_pipeline_names(ctx, ctx->query_idx);
                 compute_ctx->s->buffer->buf.writeTimestamp(vk::PipelineStageFlagBits::eAllCommands, ctx->query_pool, ctx->query_idx++);
                 ggml_vk_sync_buffers(ctx, compute_ctx);
             } else {
@@ -16530,7 +16562,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
             for (int i = 1; i < ctx->query_idx; i++) {
                 auto node = ctx->query_nodes[i];
                 auto name = ctx->query_fusion_names[i];
-                ctx->perf_logger->log_timing(node, name, uint64_t((timestamps[i] - timestamps[i-1]) * ctx->device->properties.limits.timestampPeriod));
+                ctx->perf_logger->log_timing(node, name, ctx->query_pipeline_names[i], uint64_t((timestamps[i] - timestamps[i-1]) * ctx->device->properties.limits.timestampPeriod));
             }
         } else {
             // Log each group of nodes
@@ -16548,7 +16580,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                     node_idx += ctx->query_fusion_node_count[node_idx];
                 }
                 prev_node_idx = cur_node_idx;
-                ctx->perf_logger->log_timing(nodes, names, uint64_t((timestamps[i] - timestamps[i-1]) * ctx->device->properties.limits.timestampPeriod));
+                ctx->perf_logger->log_timing(nodes, names, ctx->query_pipeline_names[i], uint64_t((timestamps[i] - timestamps[i-1]) * ctx->device->properties.limits.timestampPeriod));
             }
         }
         ctx->perf_logger->print_timings();
