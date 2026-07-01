@@ -28,7 +28,25 @@ ggml_cgraph * clip_graph_qwen3a::build() {
     {
         // conv output [OW, OH, C_out, n_chunks]
         auto conv_block = [&](ggml_tensor * x, ggml_tensor * w, ggml_tensor * b) {
-            x = ggml_conv_2d(ctx0, w, x, 2, 2, 1, 1, 1, 1);
+            if (ggml_is_quantized(w->type)) {
+                // w is stored pre-reshaped as [IC*KH*KW, OC] and quantized (Q8_0), so
+                // the matmul can use the integer-dot path. Emulate ggml_conv_2d with the
+                // operands swapped: mul_mat(kernel, im2col) -> [OC, N*OH*OW].
+                const int64_t OC = w->ne[1];
+                const int64_t IC = x->ne[2];
+                const int64_t KH = 3, KW = 3; // qwen3-asr conv kernels are 3x3
+                GGML_ASSERT(w->ne[0] == IC * KH * KW);
+                // shape-only placeholder for im2col (im2col reads kernel dims, not data)
+                ggml_tensor * kshape = ggml_new_tensor_4d(ctx0, GGML_TYPE_F16, KW, KH, IC, 1);
+                ggml_tensor * col = ggml_im2col(ctx0, kshape, x, 2, 2, 1, 1, 1, 1, true, GGML_TYPE_F32);
+                const int64_t OW = col->ne[1], OH = col->ne[2], N = col->ne[3];
+                col = ggml_reshape_2d(ctx0, col, col->ne[0], OW * OH * N);
+                x = ggml_mul_mat(ctx0, w, col); // [OC, OW*OH*N]
+                x = ggml_reshape_4d(ctx0, x, OC, OW, OH, N);
+                x = ggml_cont(ctx0, ggml_permute(ctx0, x, 2, 0, 1, 3)); // [OW, OH, OC, N]
+            } else {
+                x = ggml_conv_2d(ctx0, w, x, 2, 2, 1, 1, 1, 1);
+            }
             if (b) {
                 x = ggml_add(ctx0, x, ggml_reshape_4d(ctx0, b, 1, 1, x->ne[2], 1));
             }
