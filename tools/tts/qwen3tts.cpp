@@ -2455,7 +2455,7 @@ int main(int argc, char ** argv) {
             batch.pos[3 * n_prefill + i] = 0;
             batch.n_seq_id[i] = 1;
             batch.seq_id[i][0] = 0;
-            batch.logits[i]   = (i == n_prefill - 1) ? 1 : 0;
+            batch.logits[i]   = 1;
         }
 
         printf("\nRunning Talker prefill (%d embeddings)...\n", n_prefill);
@@ -2618,7 +2618,7 @@ int main(int argc, char ** argv) {
             cp_prefill_batch.pos[0] = 0; cp_prefill_batch.pos[1] = 1;
             cp_prefill_batch.n_seq_id[0] = 1; cp_prefill_batch.n_seq_id[1] = 1;
             cp_prefill_batch.seq_id[0][0] = 0; cp_prefill_batch.seq_id[1][0] = 0;
-            cp_prefill_batch.logits[0] = 0; cp_prefill_batch.logits[1] = 1;
+            cp_prefill_batch.logits[0] = 1; cp_prefill_batch.logits[1] = 1;
 
             ret = llama_decode(cp_ctx, cp_prefill_batch);
             llama_batch_free(cp_prefill_batch);
@@ -2785,10 +2785,10 @@ int main(int argc, char ** argv) {
                    cp_decode_ms, cp_decode_ms / n_gen);
             printf("    Head:      %.1f ms total  (%.1f ms/frame)\n",
                    head_ms, head_ms / n_gen);
-            double audio_s = n_gen / 12.0;
+            double audio_s = n_gen / 12.5;
             double wall_s = (prefill_ms + total_decode_ms) / 1000.0;
-            printf("  Real-time factor: %.2fx  (%.2fs audio in %.2fs)\n",
-                   audio_s / wall_s, audio_s, wall_s);
+            printf("  RTF: %.2f  (%.2fs audio in %.2fs)\n",
+                   wall_s / audio_s, audio_s, wall_s);
         }
 
         // ── Dump intermediates (for parity testing) ───────────────────────────
