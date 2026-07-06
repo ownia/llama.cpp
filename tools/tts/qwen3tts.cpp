@@ -1991,9 +1991,13 @@ int main(int argc, char ** argv) {
             } else if (t->type == GGML_TYPE_BF16) {
                 const ggml_bf16_t * src = (const ggml_bf16_t *)t->data + row * cols;
                 ggml_bf16_to_fp32_row(src, out, cols);
-            } else {
+            } else if (t->type == GGML_TYPE_F32) {
                 const float * src = (const float *)t->data + row * cols;
                 memcpy(out, src, cols * sizeof(float));
+            } else {
+                const ggml_type_traits * tt = ggml_get_type_traits(t->type);
+                const char * src = (const char *)t->data + row * ggml_row_size(t->type, cols);
+                tt->to_float(src, out, cols);
             }
         };
 
@@ -2005,9 +2009,14 @@ int main(int argc, char ** argv) {
             } else if (t->type == GGML_TYPE_BF16) {
                 const ggml_bf16_t * src = (const ggml_bf16_t *)t->data;
                 for (int64_t i = 0; i < n; i++) { float v; ggml_bf16_to_fp32_row(src + i, &v, 1); out[i] += v; }
-            } else {
+            } else if (t->type == GGML_TYPE_F32) {
                 const float * src = (const float *)t->data;
                 for (int64_t i = 0; i < n; i++) out[i] += src[i];
+            } else {
+                const ggml_type_traits * tt = ggml_get_type_traits(t->type);
+                std::vector<float> tmp(n);
+                tt->to_float(t->data, tmp.data(), n);
+                for (int64_t i = 0; i < n; i++) out[i] += tmp[i];
             }
         };
 

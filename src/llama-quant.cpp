@@ -351,6 +351,9 @@ static bool tensor_allows_quantization(const llama_model_quantize_params * param
     quantize &= name.find(".patch_embd")    == std::string::npos;
     quantize &= name.find(".patch_merger")  == std::string::npos;
 
+    // do not quantize Qwen3-TTS speaker encoder conv weights
+    quantize &= name.find("spk_enc.") == std::string::npos;
+
     return quantize;
 }
 
