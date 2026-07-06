@@ -45,10 +45,15 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <thread>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// Number of CPU threads for the auxiliary ggml graphs (vocoder, speaker encoder,
+// speech tokenizer). Set from -t/--threads; also applied to the llama contexts.
+static int g_n_threads = 4;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  WAV I/O helpers
@@ -857,7 +862,7 @@ static std::vector<float> enc_run_transformer(enc_model & m, const std::vector<f
 
     ggml_cgraph * gf = ggml_new_graph(comp);
     ggml_build_forward_expand(gf, cur);
-    struct ggml_cplan plan = ggml_graph_plan(gf, 4, nullptr);
+    struct ggml_cplan plan = ggml_graph_plan(gf, g_n_threads, nullptr);
     std::vector<uint8_t> work(plan.work_size > 0 ? plan.work_size : 1);
     plan.work_data = work.data();
     if (ggml_graph_compute(gf, &plan) != GGML_STATUS_SUCCESS) {
@@ -1501,6 +1506,7 @@ static std::vector<float> voc_decode_audio(const voc_model & voc,
     ggml_tensor * pos_in    = ggml_graph_get_tensor(voc_gf, "voc_pos");
 
     ggml_backend_t backend = ggml_backend_cpu_init();
+    ggml_backend_cpu_set_n_threads(backend, g_n_threads);
     ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     ggml_gallocr_alloc_graph(alloc, voc_gf);
 
@@ -1689,6 +1695,7 @@ static void print_usage(const char * prog) {
         "  --max-tokens N        Max decode frames (default: 2048)\n"
         "  --streaming-text      Enable streaming text mode (feed text progressively)\n"
         "  --n-gpu-layers N      Number of GPU layers (default: 0)\n"
+        "  -t, --threads N       Number of CPU threads (default: 4, 0 = all cores)\n"
         "  --dump-intermediates  Directory to dump codec codes for parity testing\n\n",
         prog);
 }
@@ -1737,6 +1744,7 @@ int main(int argc, char ** argv) {
         else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) seed = atoi(argv[++i]);
         else if (strcmp(argv[i], "--n-gpu-layers") == 0 && i + 1 < argc) n_gpu = atoi(argv[++i]);
         else if (strcmp(argv[i], "--cp-n-gpu-layers") == 0 && i + 1 < argc) cp_n_gpu = atoi(argv[++i]);
+        else if ((strcmp(argv[i], "--threads") == 0 || strcmp(argv[i], "-t") == 0) && i + 1 < argc) g_n_threads = atoi(argv[++i]);
         else if (strcmp(argv[i], "--stream-chunk") == 0 && i + 1 < argc) stream_chunk = atoi(argv[++i]);
         else if (strcmp(argv[i], "--dump-intermediates") == 0 && i + 1 < argc) dump_dir = argv[++i];
         else if (strcmp(argv[i], "--language") == 0 && i + 1 < argc) language = argv[++i];
@@ -1749,6 +1757,8 @@ int main(int argc, char ** argv) {
     // --temp 0 implies greedy
     if (talker_sparams.temp <= 0.0f) talker_sparams.greedy = true;
     if (cp_sparams.temp <= 0.0f) cp_sparams.greedy = true;
+
+    if (g_n_threads <= 0) g_n_threads = (int)std::max(1u, std::thread::hardware_concurrency());
 
     if (talker_path.empty() || cp_path.empty()) {
         fprintf(stderr, "ERROR: --model-talker and --model-cp are required\n");
@@ -1782,6 +1792,8 @@ int main(int argc, char ** argv) {
     talker_cparams.n_batch    = 512;
     talker_cparams.no_perf    = true;
     talker_cparams.embeddings = true;
+    talker_cparams.n_threads       = g_n_threads;
+    talker_cparams.n_threads_batch = g_n_threads;
     llama_context * talker_ctx = llama_init_from_model(talker_model, talker_cparams);
     if (!talker_ctx) { fprintf(stderr, "ERROR: failed to create talker context\n"); return 1; }
 
@@ -1794,6 +1806,8 @@ int main(int argc, char ** argv) {
     cp_cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
     cp_cparams.type_k     = GGML_TYPE_F32;
     cp_cparams.type_v     = GGML_TYPE_F32;
+    cp_cparams.n_threads       = g_n_threads;
+    cp_cparams.n_threads_batch = g_n_threads;
     llama_context * cp_ctx = llama_init_from_model(cp_model, cp_cparams);
     if (!cp_ctx) { fprintf(stderr, "ERROR: failed to create code predictor context\n"); return 1; }
 
@@ -1861,6 +1875,7 @@ int main(int argc, char ** argv) {
                     ggml_tensor * emb_out = ggml_graph_get_tensor(spk_gf, "embedding");
 
                     ggml_backend_t backend = ggml_backend_cpu_init();
+                    ggml_backend_cpu_set_n_threads(backend, g_n_threads);
                     ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
                     ggml_gallocr_alloc_graph(alloc, spk_gf);
 
